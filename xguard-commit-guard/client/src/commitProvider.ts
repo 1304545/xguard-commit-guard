@@ -1,0 +1,312 @@
+import * as vscode from 'vscode';
+import axios from 'axios';
+import { StatusBarManager } from './statusBar';
+
+interface XGuardResult {
+    risk_scores: { [key: string]: number };
+    explanation: string;
+    safe_score: number;
+    error?: string;
+}
+
+interface RiskThresholdConfig {
+    [category: string]: number;
+}
+
+export class CommitMessageProvider {
+    private statusBar: StatusBarManager;
+    private serviceUrl: string;
+    private config: any;
+
+    constructor(statusBar: StatusBarManager) {
+        this.statusBar = statusBar;
+        this.serviceUrl = 'http://127.0.0.1:8765';
+        this.config = {
+            risk_thresholds: {
+                "Data Privacy-Personal Privacy": 0.4,
+                "Cybersecurity-Access Control": 0.3,
+                "Cybersecurity-Hacker Attack": 0.5
+            },
+            timeout_seconds: 10,
+            skip_patterns: ["^fix", "^feat", "^docs", "^chore", "^refactor"],
+            min_length: 10
+        };
+        
+        // 加载配置
+        this.loadConfig();
+    }
+
+    private async loadConfig() {
+        try {
+            const response = await axios.get(`${this.serviceUrl}/config`, { timeout: 3000 });
+            this.config = response.data;
+            console.log('Loaded XGuard configuration:', this.config);
+        } catch (error) {
+            console.warn('Failed to load XGuard configuration, using defaults:', error);
+        }
+    }
+
+    private shouldSkipDetection(commitMessage: string): boolean {
+        const { min_length, skip_patterns } = this.config;
+        
+        // 检查长度
+        if (commitMessage.length < min_length) {
+            return true;
+        }
+        
+        // 检查跳过模式
+        for (const pattern of skip_patterns) {
+            const regex = new RegExp(pattern, 'i');
+            if (regex.test(commitMessage)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    public async checkCommitMessage(commitMessage: string): Promise<XGuardResult | null> {
+        // 预筛：跳过明显安全的短消息
+        if (this.shouldSkipDetection(commitMessage)) {
+            this.statusBar.updateStatus({ safeScore: 1.0, isSafe: true });
+            return null;
+        }
+
+        let loadingTimeout: NodeJS.Timeout | null = null;
+        
+        try {
+            // 显示加载状态
+            this.statusBar.setLoading(true);
+            
+            // 添加额外的客户端超时保护（15秒）
+            const clientTimeoutPromise = new Promise<never>((_, reject) => {
+                loadingTimeout = setTimeout(() => {
+                    reject(new Error('Client timeout: XGuard检测超时'));
+                }, 15000);
+            });
+
+            const responsePromise = axios.post<XGuardResult>(
+                `${this.serviceUrl}/check-commit`,
+                { message: commitMessage },
+                { timeout: this.config.timeout_seconds * 1000 }
+            );
+
+            const response = await Promise.race([responsePromise, clientTimeoutPromise]);
+
+            console.log('XGuard response received:', response);
+            const result: XGuardResult = response.data;
+            console.log('XGuard result parsed:', result);
+            
+            if (result.error) {
+                vscode.window.showErrorMessage(`XGuard检测错误: ${result.error}`);
+                this.statusBar.updateStatus({ safeScore: 0.5, isSafe: false });
+                return result;
+            }
+
+            // 检查是否触发高风险
+            const highRisks = this.getHighRiskCategories(result.risk_scores);
+            const isBlocked = highRisks.length > 0;
+            console.log('High risks detected:', highRisks);
+
+            // 立即更新状态栏（在显示警告之前）
+            this.statusBar.updateStatus({ 
+                safeScore: result.safe_score, 
+                isSafe: !isBlocked,
+                risks: highRisks
+            });
+            console.log('Status bar updated');
+
+            // 如果有高风险，显示拦截对话框
+            if (isBlocked) {
+                console.log('Showing security alert');
+                await this.showSecurityAlert(commitMessage, result, highRisks);
+                console.log('Security alert closed');
+            } else if (result.safe_score > 0.8) {
+                // 显示安全提示
+                vscode.window.showInformationMessage(
+                    `✅ Commit Message安全 (XGuard安全分: ${(result.safe_score * 100).toFixed(0)}%)`
+                );
+            }
+
+            return result;
+
+        } catch (error: any) {
+            console.error('XGuard检测失败:', error);
+            
+            if (error.code === 'ECONNREFUSED') {
+                vscode.window.showWarningMessage(
+                    'XGuard本地服务未启动，请先运行xguard-service.py',
+                    '启动服务'
+                ).then(choice => {
+                    if (choice === '启动服务') {
+                        this.startLocalService();
+                    }
+                });
+            } else if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+                vscode.window.showWarningMessage('XGuard检测超时，请稍后重试');
+            } else {
+                vscode.window.showErrorMessage(`XGuard检测失败: ${error.message}`);
+            }
+            
+            this.statusBar.updateStatus({ safeScore: 0.5, isSafe: false });
+            return null;
+        } finally {
+            // 清除超时定时器
+            if (loadingTimeout) {
+                clearTimeout(loadingTimeout);
+            }
+            this.statusBar.setLoading(false);
+        }
+    }
+
+    public getHighRiskCategories(riskScores: { [key: string]: number }): Array<{ category: string; score: number }> {
+        const highRisks: Array<{ category: string; score: number }> = [];
+        const thresholds = this.config.risk_thresholds as RiskThresholdConfig;
+
+        for (const [category, score] of Object.entries(riskScores)) {
+            // 排除Safe相关类别，因为分数越高越安全
+            const safeCategoryPatterns = ['Safe', 'safe', 'SAFE'];
+            const isSafeCategory = safeCategoryPatterns.some(pattern => 
+                category.toLowerCase().includes(pattern.toLowerCase())
+            );
+            
+            if (isSafeCategory) {
+                continue;
+            }
+            
+            const threshold = this.getThresholdForCategory(category, thresholds);
+            if (score > threshold) {
+                highRisks.push({ category, score });
+            }
+        }
+
+        // 按分数降序排序
+        return highRisks.sort((a, b) => b.score - a.score);
+    }
+
+    private getThresholdForCategory(category: string, thresholds: RiskThresholdConfig): number {
+        // 精确匹配
+        if (thresholds[category] !== undefined) {
+            return thresholds[category];
+        }
+        
+        // 模糊匹配（检查类别是否包含关键词）
+        for (const [key, threshold] of Object.entries(thresholds)) {
+            if (category.includes(key.split('-')[1] || key)) {
+                return threshold;
+            }
+        }
+        
+        // 默认阈值
+        return 0.5;
+    }
+
+    private async showSecurityAlert(
+        commitMessage: string,
+        result: XGuardResult,
+        highRisks: Array<{ category: string; score: number }>
+    ): Promise<void> {
+        const riskItems = highRisks.map(risk => 
+            `• ${this.formatRiskCategory(risk.category)}: ${(risk.score * 100).toFixed(2)}%`
+        ).join('\n');
+
+        // 修复：确保Math.min接收的是数字数组
+        const thresholdValues = Object.values(this.config.risk_thresholds) as number[];
+        const minThreshold = Math.min(...thresholdValues);
+
+        const message = `🚨 COMMIT REJECTED BY XGUARD SECURITY GUARD\n\n` +
+                       `⚠️ 检测到高风险内容（阈值>${minThreshold}）:\n` +
+                       `${riskItems}\n\n` +
+                       `💡 XGuard原生解释:\n${result.explanation}\n\n` +
+                       `✅ 修复建议:\n` +
+                       `   0. 删除不健康或违规的内容\n` +
+                       `   1. 删除敏感信息（密码、密钥、身份证等）\n` +
+                       `   2. 重新编辑Commit Message\n` +
+                       `   3. 强制绕过（不推荐）: git commit --no-verify\n\n` +
+                       `🔍 全局文本安全检测提醒:\n` +
+                       `   XGuard不仅是Commit Message检测工具，更是全方位的\n` +
+                       `   敏感信息检测专家！在任意文件中选中文本，之后点击右下角图标或点击右键选择\n` +
+                       `   "XGuard: 检测选中文本"即可进行安全扫描。\n`;
+
+        const selection = await vscode.window.showErrorMessage(
+            message,
+            { modal: true },
+            '立即修改',
+            '强制提交（需填写原因）',
+            '取消'
+        );
+
+        switch (selection) {
+            case '立即修改':
+                // 聚焦到当前编辑器
+                const editor = vscode.window.activeTextEditor;
+                if (editor) {
+                    editor.revealRange(editor.document.validateRange(
+                        new vscode.Range(0, 0, editor.document.lineCount, 0)
+                    ));
+                }
+                break;
+            case '强制提交（需填写原因）':
+                const reason = await vscode.window.showInputBox({
+                    prompt: '请输入强制提交的原因（用于审计）',
+                    placeHolder: '例如：误报、测试提交等'
+                });
+                if (reason) {
+                    // 记录审计日志
+                    this.logAuditEvent(commitMessage, reason, highRisks);
+                    vscode.window.showInformationMessage('已记录强制提交原因，您可以继续提交');
+                }
+                break;
+            case '取消':
+                // 什么都不做
+                break;
+        }
+    }
+
+    private formatRiskCategory(category: string): string {
+        const parts = category.split('-');
+        if (parts.length >= 2) {
+            return parts[1]; // 返回具体的子类别
+        }
+        return category;
+    }
+
+    private logAuditEvent(
+        commitMessage: string,
+        bypassReason: string,
+        risks: Array<{ category: string; score: number }>
+    ): void {
+        const auditLog = {
+            timestamp: new Date().toISOString(),
+            commitMessage: commitMessage.substring(0, 100) + (commitMessage.length > 100 ? '...' : ''),
+            bypassReason,
+            risks: risks.map(r => ({ category: r.category, score: r.score })),
+            workspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'unknown'
+        };
+
+        // 写入审计日志文件
+        const fs = require('fs');
+        const path = require('path');
+        const logPath = path.join(require('os').homedir(), '.xguard_commit_audit.log');
+        
+        fs.appendFileSync(logPath, JSON.stringify(auditLog) + '\n', 'utf8');
+        console.log('Audit log written:', auditLog);
+    }
+
+    private async startLocalService(): Promise<void> {
+        try {
+            const terminal = vscode.window.createTerminal('XGuard Service');
+            terminal.sendText('cd /path/to/xguard-service && python xguard_service.py');
+            terminal.show();
+            vscode.window.showInformationMessage('XGuard本地服务已启动，请稍等模型加载完成...');
+        } catch (error) {
+            vscode.window.showErrorMessage(`启动服务失败: ${error}`);
+        }
+    }
+
+    // 添加dispose方法以符合VSCode Disposable接口
+    public dispose(): void {
+        // 清理资源（如果有的话）
+        // 目前没有需要清理的资源，但方法必须存在
+    }
+}

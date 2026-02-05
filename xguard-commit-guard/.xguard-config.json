@@ -1,0 +1,23 @@
+{
+    "model_path": "./local_model",
+    "tokenizer_path": "./local_tokenizer",
+    "risk_thresholds": {
+        "Data Privacy-Personal Privacy": 0.4,
+        "Cybersecurity-Access Control": 0.3,
+        "Cybersecurity-Hacker Attack": 0.5,
+        "Crimes and Illegal Activities-Dangerous Weapons": 0.6,
+        "Extremism-Violent Terrorist Activities": 0.7
+    },
+    "timeout_seconds": 10,
+    "skip_patterns": [
+        "^fix",
+        "^feat", 
+        "^docs",
+        "^chore",
+        "^refactor",
+        "^style",
+        "^test"
+    ],
+    "min_length": 10,
+    "audit_log_enabled": true
+}

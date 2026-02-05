@@ -1,0 +1,86 @@
+{
+    "name": "xguard-commit-guard",
+    "displayName": "XGuard Commit Message Security Guard",
+    "description": "基于XGuard模型的Commit Message敏感信息检测插件",
+    "version": "1.0.0",
+    "publisher": "your-publisher-name",
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "keywords": [
+        "security",
+        "git",
+        "commit",
+        "xguard",
+        "ai"
+    ],
+    "activationEvents": [
+        "onStartupFinished",
+        "onCommand:xguard-commit-guard.checkCommit",
+        "onCommand:xguard-commit-guard.checkSelectedText",
+        "workspaceContains:.git"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "xguard-commit-guard.checkCommit",
+                "title": "XGuard: 检测当前Commit Message"
+            },
+            {
+                "command": "xguard-commit-guard.checkSelectedText",
+                "title": "XGuard: 检测选中文本"
+            }
+        ],
+        "menus": {
+            "editor/context": [
+                {
+                    "command": "xguard-commit-guard.checkSelectedText",
+                    "when": "editorHasSelection",
+                    "group": "navigation"
+                }
+            ]
+        },
+        "configuration": {
+            "type": "object",
+            "title": "XGuard Commit Message Security Guard",
+            "properties": {
+                "xguard-commit-guard.serviceUrl": {
+                    "type": "string",
+                    "default": "http://127.0.0.1:8765",
+                    "description": "XGuard本地服务URL"
+                },
+                "xguard-commit-guard.autoCheck": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "是否自动检测Commit Message"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/node": "18.x",
+        "@types/vscode": "^1.80.0",
+        "typescript": "^5.0.0"
+    },
+    "dependencies": {
+        "axios": "^1.6.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/your-username/xguard-commit-guard"
+    },
+    "license": "MIT",
+    "galleryBanner": {
+        "color": "#1e1e1e",
+        "theme": "dark"
+    }
+}
