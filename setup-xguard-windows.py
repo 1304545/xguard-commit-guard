@@ -282,9 +282,9 @@ def choose_install_method():
     """选择安装方式"""
     print("\n" + "-"*40)
     print("请选择插件安装方式：")
-    print("1) 安装并编译插件（开发模式）")
+    print("1) 安装并编译插件（开发模式）（未完善，选择2）")
     print("2) 打包并安装插件")
-    print("3) 两种都执行")
+    print("3) 两种都执行（未完善，选择2）")
     print("-"*40)
     
     while True:
