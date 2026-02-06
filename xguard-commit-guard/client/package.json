@@ -3,7 +3,7 @@
     "displayName": "XGuard Commit Message Security Guard",
     "description": "基于XGuard模型的Commit Message敏感信息检测插件",
     "version": "1.0.0",
-    "publisher": "your-publisher-name",
+    "publisher": "fall",
     "engines": {
         "vscode": "^1.80.0"
     },
