@@ -28,7 +28,7 @@
         "commands": [
             {
                 "command": "xguard-commit-guard.checkCommit",
-                "title": "XGuard: 检测当前Commit Message"
+                "title": "XGuard: 检测当前Commit Message(当前版本未完善)"
             },
             {
                 "command": "xguard-commit-guard.checkSelectedText",
