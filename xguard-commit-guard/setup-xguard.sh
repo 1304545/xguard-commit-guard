@@ -157,8 +157,8 @@ install_codeserver_extension() {
 choose_install_method() {
     echo ""
     echo "请选择插件安装方式："
-    echo "1) 桌面版VSCode（开发模式）"
-    echo "2) code-server（Web版VSCode）"
+    echo "1) 桌面版VSCode（开发模式）（未完善，选择2）"
+    echo "2) code-server（Web版VSCode）（未完善，选择2）"
     echo "3) 两种都安装"
     echo ""
     
